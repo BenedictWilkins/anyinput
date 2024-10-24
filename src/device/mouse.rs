@@ -1,7 +1,15 @@
-use std::fmt::Debug;
+//
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use crate::core::handler::InputHandler;
-use crate::core::result::InputResult;
+use pyo3::{exceptions::PyValueError, pyclass, pymethods, PyResult};
+
+use crate::{backends::backend::Backend, core::result::InputResult};
 
 /// The mouse buttons, more buttons may be added in the future.
 #[derive(Debug, Clone, Copy)]
@@ -14,22 +22,33 @@ pub enum MouseButton {
     Middle,
 }
 
+impl MouseButton {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "middle" => Some(Self::Middle),
+            _ => None,
+        }
+    }
+}
+
 pub trait MouseHandler {
     /// Press a mouse button down, primitive action.
-    fn press(&mut self, button: MouseButton) -> InputResult;
+    fn press(&self, button: MouseButton) -> InputResult;
 
     /// Release a mouse button up, primitive action.
-    fn release(&mut self, button: MouseButton) -> InputResult;
+    fn release(&self, button: MouseButton) -> InputResult;
 
     /// Click a mouse button.
-    fn click(&mut self, button: MouseButton) -> InputResult {
+    fn click(&self, button: MouseButton) -> InputResult {
         self.press(button)?;
         self.release(button)?;
         Ok(())
     }
 
     /// Hold a mouse button for a duration, then release it.
-    fn hold(&mut self, button: MouseButton, duration: std::time::Duration) -> InputResult {
+    fn hold(&self, button: MouseButton, duration: std::time::Duration) -> InputResult {
         self.press(button)?;
         std::thread::sleep(duration);
         self.release(button)?;
@@ -38,7 +57,7 @@ pub trait MouseHandler {
 
     /// Drag a mouse button to a relative position.
     fn drag(
-        &mut self,
+        &self,
         button: MouseButton,
         dx: i32,
         dy: i32,
@@ -51,32 +70,102 @@ pub trait MouseHandler {
     }
 
     /// Move the mouse to an absolute position.
-    fn move_abs(&mut self, x: i32, y: i32, duration: std::time::Duration) -> InputResult;
+    fn move_abs(&self, x: i32, y: i32, duration: std::time::Duration) -> InputResult;
 
     /// Move the mouse by a relative amount.
-    fn move_rel(&mut self, dx: i32, dy: i32, duration: std::time::Duration) -> InputResult;
+    fn move_rel(&self, dx: i32, dy: i32, duration: std::time::Duration) -> InputResult;
+}
+
+#[pyclass]
+pub struct MouseDevice {
+    backend: Arc<dyn MouseHandler + Send + Sync>,
+}
+
+impl Clone for MouseDevice {
+    fn clone(&self) -> Self {
+        Self {
+            backend: Arc::clone(&self.backend),
+        }
+    }
+}
+
+impl MouseDevice {
+    pub fn new(backend: Arc<dyn MouseHandler + Send + Sync>) -> Self {
+        Self { backend }
+    }
+
+    fn get_mouse_button(&self, button: &str) -> PyResult<MouseButton> {
+        MouseButton::from_str(button).ok_or(PyValueError::new_err("Invalid mouse button"))
+    }
+}
+
+#[pymethods]
+impl MouseDevice {
+    fn press(&self, button: &str) -> PyResult<()> {
+        MouseHandler::press(self, self.get_mouse_button(button)?)
+            .map_err(|_| PyValueError::new_err("Failed to press mouse button"))
+    }
+
+    fn release(&self, button: &str) -> PyResult<()> {
+        MouseHandler::release(self, self.get_mouse_button(button)?)
+            .map_err(|_| PyValueError::new_err("Failed to release mouse button"))
+    }
+
+    fn click(&self, button: &str) -> PyResult<()> {
+        MouseHandler::click(self, self.get_mouse_button(button)?)
+            .map_err(|_| PyValueError::new_err("Failed to click mouse"))
+    }
+
+    fn hold(&self, button: &str, duration: f64) -> PyResult<()> {
+        MouseHandler::hold(
+            self,
+            self.get_mouse_button(button)?,
+            Duration::from_secs_f64(duration),
+        )
+        .map_err(|_| PyValueError::new_err("Failed to hold mouse button"))
+    }
+
+    fn drag(&self, button: &str, dx: i32, dy: i32, duration: f64) -> PyResult<()> {
+        MouseHandler::drag(
+            self,
+            self.get_mouse_button(button)?,
+            dx,
+            dy,
+            Duration::from_secs_f64(duration),
+        )
+        .map_err(|_| PyValueError::new_err("Failed to drag mouse"))
+    }
+
+    fn move_abs(&self, x: i32, y: i32, duration: f64) -> PyResult<()> {
+        MouseHandler::move_abs(self, x, y, Duration::from_secs_f64(duration))
+            .map_err(|_| PyValueError::new_err("Failed to move mouse"))
+    }
+
+    fn move_rel(&self, dx: i32, dy: i32, duration: f64) -> PyResult<()> {
+        MouseHandler::move_rel(self, dx, dy, Duration::from_secs_f64(duration))
+            .map_err(|_| PyValueError::new_err("Failed to move mouse"))
+    }
 }
 
 // Implement the MouseHandler trait for InputHandler
-impl<B: MouseHandler> MouseHandler for InputHandler<B> {
-    fn press(&mut self, button: MouseButton) -> InputResult {
+impl MouseHandler for MouseDevice {
+    fn press(&self, button: MouseButton) -> InputResult {
         self.backend.press(button)
     }
-
-    fn release(&mut self, button: MouseButton) -> InputResult {
+    fn release(&self, button: MouseButton) -> InputResult {
         self.backend.release(button)
     }
 
-    fn click(&mut self, button: MouseButton) -> InputResult {
+    fn click(&self, button: MouseButton) -> InputResult {
         self.backend.click(button)
     }
 
-    fn hold(&mut self, button: MouseButton, duration: std::time::Duration) -> InputResult {
+    fn hold(&self, button: MouseButton, duration: std::time::Duration) -> InputResult {
         self.backend.hold(button, duration)
     }
 
     fn drag(
-        &mut self,
+        &self,
         button: MouseButton,
         dx: i32,
         dy: i32,
@@ -85,11 +174,11 @@ impl<B: MouseHandler> MouseHandler for InputHandler<B> {
         self.backend.drag(button, dx, dy, duration)
     }
 
-    fn move_abs(&mut self, x: i32, y: i32, duration: std::time::Duration) -> InputResult {
+    fn move_abs(&self, x: i32, y: i32, duration: std::time::Duration) -> InputResult {
         self.backend.move_abs(x, y, duration)
     }
 
-    fn move_rel(&mut self, dx: i32, dy: i32, duration: std::time::Duration) -> InputResult {
+    fn move_rel(&self, dx: i32, dy: i32, duration: std::time::Duration) -> InputResult {
         self.backend.move_rel(dx, dy, duration)
     }
 }

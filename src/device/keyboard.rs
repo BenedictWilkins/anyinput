@@ -1,6 +1,7 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
-use crate::core::handler::InputHandler;
+use pyo3::pyclass;
+
 use crate::core::result::InputResult;
 #[derive(Debug, Clone, Copy)]
 pub enum KeyboardKey {
@@ -22,22 +23,23 @@ pub enum KeyboardKey {
     // TODO we might add others!
 }
 
+// defines the keyboard handler trait, this should be implemented by the backend!
 pub trait KeyboardHandler {
     /// Press a key down, primitive action.
-    fn press(&mut self, key: KeyboardKey) -> InputResult;
+    fn press(&self, key: KeyboardKey) -> InputResult;
 
     /// Release a key up, primitive action.
-    fn release(&mut self, key: KeyboardKey) -> InputResult;
+    fn release(&self, key: KeyboardKey) -> InputResult;
 
     /// Tap a key.
-    fn tap(&mut self, key: KeyboardKey) -> InputResult {
+    fn tap(&self, key: KeyboardKey) -> InputResult {
         self.press(key)?;
         self.release(key)?;
         Ok(())
     }
 
     /// Hold a key for a duration, then release it.
-    fn hold(&mut self, key: KeyboardKey, duration: std::time::Duration) -> InputResult {
+    fn hold(&self, key: KeyboardKey, duration: std::time::Duration) -> InputResult {
         self.press(key)?;
         std::thread::sleep(duration);
         self.release(key)?;
@@ -45,27 +47,45 @@ pub trait KeyboardHandler {
     }
 
     /// Type text.
-    fn text(&mut self, text: &str, duration: std::time::Duration) -> InputResult;
+    fn text(&self, text: &str, duration: std::time::Duration) -> InputResult;
 }
 
-// implement the KeyboardHandler trait for InputHandler
-impl<B: KeyboardHandler> KeyboardHandler for InputHandler<B> {
-    fn press(&mut self, key: KeyboardKey) -> InputResult {
+#[pyclass]
+pub struct KeyboardDevice {
+    backend: Arc<dyn KeyboardHandler + Send + Sync>,
+}
+
+impl KeyboardDevice {
+    pub fn new(backend: Arc<dyn KeyboardHandler + Send + Sync>) -> Self {
+        Self { backend }
+    }
+}
+
+impl Clone for KeyboardDevice {
+    fn clone(&self) -> Self {
+        Self {
+            backend: Arc::clone(&self.backend),
+        }
+    }
+}
+
+impl KeyboardHandler for KeyboardDevice {
+    fn press(&self, key: KeyboardKey) -> InputResult {
         self.backend.press(key)
     }
-    fn release(&mut self, key: KeyboardKey) -> InputResult {
+    fn release(&self, key: KeyboardKey) -> InputResult {
         self.backend.release(key)
     }
 
-    fn tap(&mut self, key: KeyboardKey) -> InputResult {
+    fn tap(&self, key: KeyboardKey) -> InputResult {
         self.backend.tap(key)
     }
 
-    fn hold(&mut self, key: KeyboardKey, duration: std::time::Duration) -> InputResult {
+    fn hold(&self, key: KeyboardKey, duration: std::time::Duration) -> InputResult {
         self.backend.hold(key, duration)
     }
 
-    fn text(&mut self, text: &str, duration: std::time::Duration) -> InputResult {
+    fn text(&self, text: &str, duration: std::time::Duration) -> InputResult {
         self.backend.text(text, duration)
     }
 }
