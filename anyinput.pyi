@@ -17,7 +17,12 @@ class Device:
     """Base class for all devices."""
 
 class MouseDevice(Device):
-    def release(self, button: str): ...
+    def release(self, button: str):
+        """Release the given mouse button.
+
+        Args:
+            button: The mouse button to release.
+        """
     def press(self, button: str): ...
     def click(self, button: str): ...
     def hold(self, button: str, duration: float): ...

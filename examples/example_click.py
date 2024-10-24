@@ -3,9 +3,8 @@ import time
 
 session = Session()
 mouse = session.get_device("mouse")
-for i in range(100):
-    time.sleep(0.1)
-    mouse.move_rel(2, 2, 0)
+mouse.hold("left", 5)
+
 # use anyinput::{
 #     backends::enigo_backend::EnigoBackend,
 #     core::{handler::InputHandler, KeyboardHandler, MouseHandler},
